@@ -2,6 +2,8 @@ package store
 
 import "sync"
 
+// Testing new environment
+
 type Store struct {
 	sync.RWMutex // We use it instead of Mutex because we want to just lock the read
 				 // not the entire variable, so many variables can read at the same time
