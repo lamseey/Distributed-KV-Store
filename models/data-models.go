@@ -210,8 +210,22 @@ func (n *Node) Set(key string, val string) error {
 	n.Log = append(n.Log, entry)
 	n.Store[key] = val
 	n.Unlock()
+	n.replicateToFollowers(entry)
 
 	return nil
 }
 
+func (n *Node) replicateToFollowers(entry LogEntry) {
+	n.RLock()
+	peers := append([]string(nil), n.Peers...)
+	term := n.CurrentTerm
+	leaderID := n.ID
+	n.RUnlock()
 
+	for _, peer := range peers {
+		go func (p string) {
+			n.SendAppendEntries(p, term, leaderID, []LogEntry{entry})
+		}(peer)
+	}
+
+}
