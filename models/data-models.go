@@ -125,3 +125,33 @@ func (n *Node) StartElection() {
 		}
 	}
 }
+
+func (n *Node) AppendEntries(term int, leaderID int, entries []LogEntry) error {
+	n.Lock()
+	defer n.Unlock()
+
+	if term < n.CurrentTerm {
+		// Old entries
+		return nil
+	}
+
+	if term > n.CurrentTerm {
+		n.CurrentTerm = term
+		n.Role = "Follower"
+		n.VotedFor = 0
+	}
+
+	if n.Role == "Candidate" {
+		n.Role = "Follower"
+	}
+
+	for _, entry := range(entries) {
+		// append entry
+		n.Log = append(n.Log, entry)
+		// if it's a set, update the map ^^
+		if entry.Command == "SET" {
+			n.Store[entry.Key] = entry.Value.(string)
+		}
+	}
+	return nil
+}
