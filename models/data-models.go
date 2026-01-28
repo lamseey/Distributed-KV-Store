@@ -1,7 +1,11 @@
 package models
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
 	"sync"
+	"time"
 )
 
 type Node struct {		
@@ -55,6 +59,33 @@ func (n *Node) RequestVote(term int, candidateID int) (granted bool) {
 	// Bro voted
 	n.VotedFor = candidateID
 	return true
+}
+
+// We do this to send request vote through network
+
+func (n *Node) sendRequestVote(peerAddress string, term int, candidateID int) (granted bool){
+	mapToSend := map[string]int {
+		"term":term, 
+		"candidateID": candidateID,
+	}
+
+	body, _ := json.Marshal(mapToSend)
+
+	// We add timeout of 2 seconds
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Post("http://"+peerAddress+"/vote", "application/json", bytes.NewBuffer(body))
+
+	if err != nil {return false}
+	defer resp.Body.Close()
+
+	var result map[string]bool
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return false
+	}
+	return result["granted"]
+
 }
 
 func (n *Node) StartElection() {
