@@ -89,10 +89,39 @@ func (n *Node) sendRequestVote(peerAddress string, term int, candidateID int) (g
 }
 
 func (n *Node) StartElection() {
+	// We change these fields for our candidate
+	n.Lock()
 	n.CurrentTerm++
 	n.Role = "Candidate"
 	n.VotedFor = n.ID
-	go func() {
-		
-	}()
+	n.VoteCount = 1
+	term := n.CurrentTerm
+	candidateID := n.ID
+	peers := append([]string(nil), n.Peers...) // Copy peers
+	n.Unlock()
+
+	majority := (len(peers) / 2) + 1
+	votes := make(chan bool, len(peers))
+
+	for _, peer := range peers {
+		go func(p string){
+			granted := n.sendRequestVote(p, term, candidateID)
+			votes <- granted
+		}(peer)
+	}
+
+	// Let's see if he won the elections
+	for range len(peers){
+		if <- votes {
+			n.Lock()
+			n.VoteCount ++
+			// We check if n.Role == "Candidate" because we can become Follower if someone appended entries
+			if n.VoteCount >= majority && n.Role == "Candidate" {
+				n.Role = "Leader"
+				n.Unlock()
+				return
+			}
+			n.Unlock()
+		}
+	}
 }
