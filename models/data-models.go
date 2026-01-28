@@ -155,3 +155,63 @@ func (n *Node) AppendEntries(term int, leaderID int, entries []LogEntry) error {
 	}
 	return nil
 }
+
+// Now we want to send through the network the entries 
+
+func (n *Node) SendAppendEntries(peerAddress string, term int, leaderID int, entries []LogEntry) bool {
+	mapToSend := map[string]any {
+		"term"	  :term,
+		"leaderID":leaderID,
+		"entries" :entries,
+	}
+
+	reqBody, _ := json.Marshal(mapToSend)
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Post("http://" + peerAddress + "/append", "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return false
+	}
+	
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
+}
+
+func (n *Node) Get(key string) (string, bool) {
+	n.RLock()
+	defer n.RUnlock()
+
+	val, ok := n.Store[key]
+	return val, ok 
+}
+
+func (n *Node) Set(key string, val string) error {
+	n.Lock()
+
+	if n.Role != "Leader" {
+		n.Unlock()
+		return nil
+	}
+
+	_, ok := n.Store[key]
+	if !ok {
+		n.Unlock()
+		return nil
+	}
+
+	entry := LogEntry {
+		Term   : n.CurrentTerm,
+		Command: "SET",
+		Key    : key,
+		Value  : val,
+	}
+
+	n.Log = append(n.Log, entry)
+	n.Store[key] = val
+	n.Unlock()
+
+	return nil
+}
+
+
