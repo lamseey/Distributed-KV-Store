@@ -34,10 +34,10 @@ func (s *Server) HandleRequestVote(w http.ResponseWriter, r http.Request) {
 
 func (s *Server) HandleAppendEntries(w http.ResponseWriter, r http.Request) {
 	var req struct {
-		Term int
-		LeaderID int
-		entries []models.LogEntry
-	}
+        Term     int                `json:"term"`
+        LeaderID int                `json:"leaderID"`
+        Entries  []models.LogEntry  `json:"entries"`
+    }
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
@@ -45,11 +45,30 @@ func (s *Server) HandleAppendEntries(w http.ResponseWriter, r http.Request) {
 		return
 	}
 
-	err = s.Node.AppendEntries(req.Term, req.LeaderID, req.entries)
+	err = s.Node.AppendEntries(req.Term, req.LeaderID, req.Entries)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) HandleGet(w http.ResponseWriter, r http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, "key parameter needed", http.StatusBadRequest)
+		return
+	}
+
+	val, ok := s.Node.Get(key)
+
+	if !ok {
+		http.Error(w, "key not found", http.StatusNotFound)
+		return
+	}
+
+	response := map[string]string {"key":key, "value":val}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
