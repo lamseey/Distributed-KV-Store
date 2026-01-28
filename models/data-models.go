@@ -3,6 +3,7 @@ package models
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -132,7 +133,7 @@ func (n *Node) AppendEntries(term int, leaderID int, entries []LogEntry) error {
 
 	if term < n.CurrentTerm {
 		// Old entries
-		return nil
+		return fmt.Errorf("These entries are old")
 	}
 
 	if term > n.CurrentTerm {
