@@ -72,3 +72,35 @@ func (s *Server) HandleGet(w http.ResponseWriter, r http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
+
+func (s *Server) HandleSet(w http.ResponseWriter, r http.Request) {
+	var req struct {
+		Key string		`json:"key"`
+		Value string	`json:"value"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.Node.RLock()
+	isLeader := s.Node.Role == "Leader"
+	s.Node.RUnlock()
+
+	if !isLeader {
+		http.Error(w, "not a leader", http.StatusBadRequest)
+		return
+	}
+
+	err = s.Node.Set(req.Key, req.Value)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}

@@ -192,13 +192,13 @@ func (n *Node) Set(key string, val string) error {
 
 	if n.Role != "Leader" {
 		n.Unlock()
-		return nil
+		return fmt.Errorf("not a leader")
 	}
 
 	_, ok := n.Store[key]
 	if !ok {
 		n.Unlock()
-		return nil
+		return fmt.Errorf("couldn't find the key %s", key)
 	}
 
 	entry := LogEntry {
