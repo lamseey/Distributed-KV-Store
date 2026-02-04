@@ -1,10 +1,8 @@
 package models
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"net/rpc"
 	"sync"
 	"time"
 )
@@ -64,29 +62,30 @@ func (n *Node) RequestVote(term int, candidateID int) (granted bool) {
 
 // We do this to send request vote through network
 
+type RequestVoteArgs struct {
+	Term int `json:"term"`
+	CandidateID int `json:"candidateID"` 
+}
+
+type RequestVoteReply struct {
+	Granted bool `json:"granted"`
+}
+
 func (n *Node) sendRequestVote(peerAddress string, term int, candidateID int) (granted bool){
-	mapToSend := map[string]int {
-		"term":term, 
-		"candidateID": candidateID,
-	}
-
-	body, _ := json.Marshal(mapToSend)
-
-	// We add timeout of 2 seconds
-
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Post("http://"+peerAddress+"/vote", "application/json", bytes.NewBuffer(body))
-
-	if err != nil {return false}
-	defer resp.Body.Close()
-
-	var result map[string]bool
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	client, err := rpc.DialHTTP("tcp", peerAddress)
 	if err != nil {
 		return false
 	}
-	return result["granted"]
 
+	defer client.Close()
+
+	args := RequestVoteArgs{Term: term, CandidateID: candidateID}
+	var reply RequestVoteReply
+	err = client.Call("RPCServer.RequestVote", args, &reply)
+	if err != nil {
+		return false
+	}
+	return reply.Granted
 }
 
 func (n *Node) StartElection() {
@@ -159,24 +158,41 @@ func (n *Node) AppendEntries(term int, leaderID int, entries []LogEntry) error {
 
 // Now we want to send through the network the entries 
 
+type AppendEntriesArgs struct {
+	Term int `json:"term"`
+	LeaderID int `json:"leaderID"`
+	Entries []LogEntry `json:"entries"`
+}
+
+type AppendEntriesReply struct {
+	Success bool `json:"success"`
+}
+
 func (n *Node) SendAppendEntries(peerAddress string, term int, leaderID int, entries []LogEntry) bool {
-	mapToSend := map[string]any {
-		"term"	  :term,
-		"leaderID":leaderID,
-		"entries" :entries,
-	}
-
-	reqBody, _ := json.Marshal(mapToSend)
-
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Post("http://" + peerAddress + "/append", "application/json", bytes.NewBuffer(reqBody))
+	client, err := rpc.DialHTTP("tcp", peerAddress)
 	if err != nil {
 		return false
 	}
-	
-	defer resp.Body.Close()
 
-	return resp.StatusCode == http.StatusOK
+	defer client.Close()
+
+	args := AppendEntriesArgs{Term: term, LeaderID: leaderID, Entries: entries}
+	var reply AppendEntriesReply
+	// We add timeout 
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Call("RPCServer", args, &reply)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return false
+		}
+		return reply.Success
+	case <-time.After(2 * time.Second):
+		return false
+	}
+
 }
 
 func (n *Node) Get(key string) (string, bool) {
