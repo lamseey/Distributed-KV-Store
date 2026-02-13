@@ -1,135 +1,141 @@
 package server
 
 import (
-	"encoding/json"
-	"fmt"
-	"kvs/models"
-	"net/http"
+    "fmt"
+    "kvs/models"
+    "net"
+    "net/http"
+    "net/rpc"
 )
 
 type Server struct {
-	Node *models.Node
+    Node *models.Node
 }
 
 func NewServer(node *models.Node) *Server {
-	return &Server{Node: node}
+    return &Server{Node: node}
 }
 
-func (s *Server) HandleRequestVote(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Term int			`json:"term"`
-		CandidateID int		`json:"candidateID"`
-	}
-
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return 
-	}
-
-	granted := s.Node.RequestVote(req.Term, req.CandidateID)
-	response := map[string]bool{"granted":granted}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+// RPC Server wrapper for registering methods
+type RPCServer struct {
+    Server *Server
 }
 
-func (s *Server) HandleAppendEntries(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-        Term     int                `json:"term"`
-        LeaderID int                `json:"leaderID"`
-        Entries  []models.LogEntry  `json:"entries"`
+// RPC method for RequestVote
+func (rs *RPCServer) RequestVote(args *models.RequestVoteArgs, reply *models.RequestVoteReply) error {
+    granted := rs.Server.Node.RequestVote(args.Term, args.CandidateID)
+    reply.Granted = granted
+    return nil
+}
+
+// RPC method for AppendEntries
+func (rs *RPCServer) AppendEntries(args *models.AppendEntriesArgs, reply *models.AppendEntriesReply) error {
+    err := rs.Server.Node.AppendEntries(args.Term, args.LeaderID, args.Entries)
+    if err != nil {
+        reply.Success = false
+        return err
+    }
+    reply.Success = true
+    return nil
+}
+
+// Get RPC Args and Reply
+type GetArgs struct {
+    Key string
+}
+
+type GetReply struct {
+    Value string
+    Found bool
+}
+
+// RPC method for Get
+func (rs *RPCServer) Get(args *GetArgs, reply *GetReply) error {
+    val, ok := rs.Server.Node.Get(args.Key)
+    reply.Value = val
+    reply.Found = ok
+    return nil
+}
+
+// Set RPC Args and Reply
+type SetArgs struct {
+    Key   string
+    Value string
+}
+
+type SetReply struct {
+    Success bool
+    Error   string
+}
+
+// RPC method for Set
+func (rs *RPCServer) Set(args *SetArgs, reply *SetReply) error {
+    rs.Server.Node.RLock()
+    isLeader := rs.Server.Node.Role == "Leader"
+    rs.Server.Node.RUnlock()
+
+    if !isLeader {
+        reply.Success = false
+        reply.Error = "not a leader"
+        return fmt.Errorf("not a leader")
     }
 
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	err = s.Node.AppendEntries(req.Term, req.LeaderID, req.Entries)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func (s *Server) HandleGet(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get("key")
-	if key == "" {
-		http.Error(w, "key parameter needed", http.StatusBadRequest)
-		return
-	}
-
-	val, ok := s.Node.Get(key)
-
-	if !ok {
-		http.Error(w, "key not found", http.StatusNotFound)
-		return
-	}
-
-	response := map[string]string {"key":key, "value":val}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
-func (s *Server) HandleSet(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Key string		`json:"key"`
-		Value string	`json:"value"`
-	}
-
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	s.Node.RLock()
-	isLeader := s.Node.Role == "Leader"
-	s.Node.RUnlock()
-
-	if !isLeader {
-		http.Error(w, "not a leader", http.StatusBadRequest)
-		return
-	}
-
-	err = s.Node.Set(req.Key, req.Value)
-
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]string{"status": "success"})
-}
-
-func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
-    s.Node.RLock()
-    status := map[string]interface{}{
-        "id": s.Node.ID,
-        "address": s.Node.Address,
-        "role": s.Node.Role,
-        "term": s.Node.CurrentTerm,
-        "votedFor": s.Node.VotedFor,
-        "logSize": len(s.Node.Log),
-        "commitIndex": s.Node.CommitIdx,
+    err := rs.Server.Node.Set(args.Key, args.Value)
+    if err != nil {
+        reply.Success = false
+        reply.Error = err.Error()
+        return err
     }
-    s.Node.RUnlock()
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(status)
+    reply.Success = true
+    return nil
+}
+
+// Status RPC Args and Reply
+type StatusArgs struct{}
+
+type StatusReply struct {
+    ID          int
+    Address     string
+    Role        string
+    Term        int
+    VotedFor    int
+    LogSize     int
+    CommitIndex int
+}
+
+// RPC method for Status
+func (rs *RPCServer) Status(args *StatusArgs, reply *StatusReply) error {
+    rs.Server.Node.RLock()
+    reply.ID = rs.Server.Node.ID
+    reply.Address = rs.Server.Node.Address
+    reply.Role = rs.Server.Node.Role
+    reply.Term = rs.Server.Node.CurrentTerm
+    reply.VotedFor = rs.Server.Node.VotedFor
+    reply.LogSize = len(rs.Server.Node.Log)
+    reply.CommitIndex = rs.Server.Node.CommitIdx
+    rs.Server.Node.RUnlock()
+    return nil
 }
 
 func (s *Server) Start() error {
-	http.HandleFunc("/vote", s.HandleRequestVote)
-    http.HandleFunc("/append", s.HandleAppendEntries)
-    http.HandleFunc("/get", s.HandleGet)
-    http.HandleFunc("/set", s.HandleSet)
-    http.HandleFunc("/status", s.HandleStatus)
+    rpcServer := &RPCServer{Server: s}
 
-	fmt.Println("Node", s.Node.ID, "starting server on", s.Node.Address)
-	return http.ListenAndServe(s.Node.Address, nil)
+    // Register RPC server
+    err := rpc.Register(rpcServer)
+    if err != nil {
+        return fmt.Errorf("failed to register RPC server: %v", err)
+    }
+
+    // Handle RPC over HTTP
+    rpc.HandleHTTP()
+
+    // Create listener
+    listener, err := net.Listen("tcp", s.Node.Address)
+    if err != nil {
+        return fmt.Errorf("failed to listen on %s: %v", s.Node.Address, err)
+    }
+
+    fmt.Println("Node", s.Node.ID, "starting RPC server on", s.Node.Address)
+    return http.Serve(listener, nil)
 }
